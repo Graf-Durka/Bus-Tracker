@@ -3,10 +3,45 @@ import sqlite3
 class BusManager:
     def __init__(self, db_path='data/buses_data.sqlite'):
         self.db_path = db_path
-        self.SYSTEM_USER_ID = "0"  # Тот самый системный пользователь
+        self.SYSTEM_USER_ID = "0"
+        self.setup_database() 
 
     def _get_conn(self):
         return sqlite3.connect(self.db_path)
+
+    def setup_database(self):
+        """Создает необходимые таблицы, если они отсутствуют."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            
+            # Таблица для активных задач парсинга
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS search_results (
+                    track_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    route_id INTEGER,
+                    bus_name TEXT,
+                    start_stop TEXT,
+                    end_stop TEXT,
+                    direction TEXT,
+                    arrival_time_start TEXT,
+                    arrival_time_end TEXT,
+                    est_travel_time_mins INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Таблица связей пользователей и маршрутов
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_routes (
+                    user_id TEXT,
+                    track_id INTEGER,
+                    PRIMARY KEY (user_id, track_id),
+                    FOREIGN KEY (track_id) REFERENCES search_results (track_id) ON DELETE CASCADE
+                )
+            ''')
+            conn.commit()
+            print("[DB] Таблицы search_results и user_routes проверены/созданы.")
 
     async def delete_user_data(self, user_id: str):
         """
