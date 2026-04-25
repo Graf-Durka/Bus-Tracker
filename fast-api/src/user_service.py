@@ -12,6 +12,7 @@ class BusManager:
     def setup_database(self):
         """Создает необходимые таблицы, если они отсутствуют."""
         with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             
             # Таблица для активных задач парсинга
@@ -26,6 +27,7 @@ class BusManager:
                     arrival_time_start TEXT,
                     arrival_time_end TEXT,
                     est_travel_time_mins INTEGER,
+                    travel_time_route INTEGER,
                     status TEXT DEFAULT 'pending',
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -50,6 +52,7 @@ class BusManager:
         """
         with self._get_conn() as conn:
             cursor = conn.cursor()
+            conn.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("DELETE FROM user_routes WHERE user_id = ?", (str(user_id),))
             # Удаляем из search_results только те задачи, которые никто не смотрит (даже "0")
             cursor.execute('''
@@ -62,6 +65,7 @@ class BusManager:
     async def get_or_create_tracks_by_stops(self, start: str, end: str):
         found = []
         with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             query = '''
                 SELECT DISTINCT r.id, r.bus_name, s1.direction, s1.arrival_time, s2.arrival_time
@@ -109,12 +113,14 @@ class BusManager:
 
     async def quick_subscribe(self, user_id: str, track_id: int):
         with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("INSERT OR IGNORE INTO user_routes (user_id, track_id) VALUES (?,?)", (str(user_id), track_id))
             conn.commit()
         return True
 
     async def get_user_dashboard(self, user_id: str):
         with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT sr.track_id, sr.bus_name, sr.start_stop, sr.end_stop, sr.arrival_time_start, sr.arrival_time_end, sr.status

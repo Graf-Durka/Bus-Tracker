@@ -1,0 +1,8 @@
+__pycache__/
+*.sqlite
+.venv/
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+.git/

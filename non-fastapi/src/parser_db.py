@@ -5,7 +5,7 @@ import urllib.parse
 from playwright.sync_api import sync_playwright
 
 class ParserDB:
-    def __init__(self, db_path='buses_data.sqlite'):
+    def __init__(self, db_path='data/buses_data.sqlite'):
         self.db_path = db_path
         self.setup_database()
 
