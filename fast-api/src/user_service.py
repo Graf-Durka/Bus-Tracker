@@ -128,3 +128,38 @@ class BusManager:
                 WHERE ur.user_id = ?
             ''', (str(user_id),))
             return cursor.fetchall()
+
+    async def get_all_stops(self):
+        """
+        Получает список всех остановок, отсекая всё, что идет после скобки '('.
+        Возвращает отсортированный список уникальных названий.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT DISTINCT stop_name FROM route_stops")
+                raw_stops = cursor.fetchall()
+            except sqlite3.OperationalError:
+                return []
+
+        clean_stops = set()
+        
+        for row in raw_stops:
+            name = row[0]
+            if name:
+                # .split('(') разобьет строку на список: ['Метро Студенческая ', 'проспект Карла Маркса)']
+                # [0] берет первую часть (до скобки)
+                # .strip() убирает лишние пробелы по краям
+                cleaned_name = name.split('(')[0].strip()
+                
+                if cleaned_name:
+                    clean_stops.add(cleaned_name)
+
+        return sorted(list(clean_stops))
+    
+    async def get_user_track_ids(self, user_id: str):
+        """Возвращает список всех track_id, на которые подписан пользователь."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT track_id FROM user_routes WHERE user_id = ?", (user_id,))
+            return [row[0] for row in cursor.fetchall()]

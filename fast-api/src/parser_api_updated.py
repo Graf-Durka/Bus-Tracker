@@ -8,8 +8,9 @@ from playwright.async_api import async_playwright
 class AsyncParserService:
     def __init__(self, db_path='data/buses_data.sqlite'):
         self.db_path = db_path
-        self.CONCURRENCY_LIMIT = 3
-        self.semaphore = asyncio.Semaphore(self.CONCURRENCY_LIMIT)
+        # Оставляем семафор на случай, если где-то вызовется параллельно, 
+        # но внутри методов будем идти циклом
+        self.semaphore = asyncio.Semaphore(3)
         self._check_and_update_schema()
 
     def _get_conn(self):
@@ -30,69 +31,70 @@ class AsyncParserService:
 
     def is_time_valid(self, calculated_mins, est_mins):
         if not est_mins or est_mins == 0: return True
-        # Оригинальный допуск 0.5 - 1.5
         return (0.5 * est_mins) <= calculated_mins <= (1.5 * est_mins)
 
     def parse_to_minutes(self, stop_data, now):
-        """ПОЛНАЯ КОПИЯ логики парсинга из parser_db.py"""
-        # Проверка относительного времени (timeRel)
         if stop_data.get('timeRel'):
             m = re.search(r'(\d+)', stop_data['timeRel'])
             if m: return int(m.group(1))
-        
-        # Проверка абсолютного времени (timeAbs)
         if stop_data.get('timeAbs'):
             try:
                 t_parts = datetime.datetime.strptime(stop_data['timeAbs'], "%H:%M")
                 dt = now.replace(hour=t_parts.hour, minute=t_parts.minute, second=0, microsecond=0)
-                # Логика перехода через сутки (порог 6 часов из оригинала)
                 if dt < now - datetime.timedelta(hours=6):
                     dt += datetime.timedelta(days=1)
                 return int((dt - now).total_seconds() / 60)
             except: pass
         return None
 
-    async def update_all_live_data(self):
-        with self._get_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop 
-                FROM search_results 
-                WHERE status = 'pending' OR (strftime('%s', 'now') - strftime('%s', last_updated) > 45)
-            ''')
-            tasks = cursor.fetchall()
-
-        if not tasks: return
+    async def _run_parsing_loop(self, tasks):
+        """Внутренний метод для последовательного прохода по списку задач."""
+        if not tasks:
+            return
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            # Запускаем с небольшими оптимизациями для Docker
+            browser = await p.chromium.launch(headless=True, args=['--disable-dev-shm-usage'])
             context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
-            
+
             for track_id, bus_name, est_mins, direction, s_stop, e_stop in tasks:
                 page = await context.new_page()
+                # Тайм-аут на навигацию — 30 сек, на поиск селекторов — 15 сек
+                page.set_default_navigation_timeout(30000)
+                page.set_default_timeout(15000)
+                
                 try:
-                    await page.route("**/*.{png,jpg,jpeg,svg}", lambda route: route.abort())
-                    await page.goto(f"https://2gis.ru/novosibirsk/search/{urllib.parse.quote(bus_name)}", timeout=30000)
+                    # Блокируем ВСЁ лишнее: картинки, шрифты, стили карт
+                    await page.route("**/*.{png,jpg,jpeg,svg,woff,woff2,css}", lambda route: route.abort())
                     
-                    # Ожидание загрузки (как в оригинале, проверка на список или карточку)
-                    await page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=15000)
+                    # КЛЮЧ: ждем только 'domcontentloaded' (структуру), а не 'load' (картинки)
+                    await page.goto(
+                        f"https://2gis.ru/novosibirsk/search/{urllib.parse.quote(bus_name)}", 
+                        wait_until="domcontentloaded" 
+                    )
+                    
+                    # Ждем появления списка ИЛИ карточки
+                    try:
+                        await page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=10000)
+                    except:
+                        pass
 
-                    # Если открылся список — ищем ТОЧНОЕ совпадение (чтобы 28 не стал 28а)
+                    # Проверка на список (если нужно кликнуть)
                     bus_cards = await page.query_selector_all("._1kf6gff")
                     if bus_cards:
                         for card in bus_cards:
-                            name = (await card.inner_text()).split('\n')[0].replace('\xa0', ' ').strip()
-                            if name == bus_name:
+                            text = await card.inner_text()
+                            if bus_name in text.split('\n')[0]:
                                 await card.click()
+                                await asyncio.sleep(0.5)
                                 break
                     
-                    await page.wait_for_selector("._1sv3x8qq", timeout=10000)
-                    await asyncio.sleep(2) # Пауза для live-данных
+                    # Даем секундную паузу на прогрузку Live-данных (времени прибытия)
+                    await asyncio.sleep(1.5)
 
-                    # Сбор данных со всеми CSS-классами из оригинала
                     stops_data = await page.evaluate(r"""() => {
                         return Array.from(document.querySelectorAll('._15nfxwn')).map(el => {
                             let tAbs = el.querySelector('._apda8tn, ._1g4kbeq');
@@ -105,7 +107,6 @@ class AsyncParserService:
                         });
                     }""")
 
-                    # Определение индексов старта и финиша
                     start_idx, end_idx = -1, -1
                     target_occ = 2 if direction == 'from' else 1
                     curr_occ = 0
@@ -192,3 +193,33 @@ class AsyncParserService:
                 finally:
                     await page.close()
             await browser.close()
+
+    async def update_all_live_data(self):
+        """Обновление всех автобусов по расписанию."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop 
+                FROM search_results 
+                WHERE status = 'pending' OR (strftime('%s', 'now') - strftime('%s', last_updated) > 45)
+            ''')
+            tasks = cursor.fetchall()
+        await self._run_parsing_loop(tasks)
+
+    async def update_specific_tracks(self, track_ids: list):
+        """Обновление всех маршрутов конкретного пользователя."""
+        if not track_ids: return
+        with self._get_conn() as conn:
+            placeholders = ', '.join(['?'] * len(track_ids))
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop 
+                FROM search_results 
+                WHERE track_id IN ({placeholders})
+            ''', track_ids)
+            tasks = cursor.fetchall()
+        await self._run_parsing_loop(tasks)
+
+    async def update_single_track(self, track_id: int):
+        """Обновление одного конкретного маршрута."""
+        await self.update_specific_tracks([track_id])

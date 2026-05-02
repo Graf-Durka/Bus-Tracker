@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from src.user_service import BusManager
-from src.parser_api_paralel import AsyncParserService
+from src.parser_api_updated import AsyncParserService
 import asyncio
 
 app = FastAPI()
@@ -49,3 +49,34 @@ async def dashboard(request: Request, user_id: str = "0"):
             "status": r[6],
         } for r in data
     ]
+
+@app.get("/stops")
+async def get_all_stops(request: Request):
+    """Возвращает список всех очищенных остановок."""
+    manager: BusManager = request.app.state.bus_manager
+    stops = await manager.get_all_stops()
+    return {"status": "ok", "total": len(stops), "stops": stops}
+
+@app.post("/refresh_user_buses")
+async def refresh_user_buses(user_id: str, request: Request):
+    manager: BusManager = request.app.state.bus_manager
+    parser: AsyncParserService = request.app.state.parser
+    
+    # 1. Получаем ID маршрутов пользователя
+    track_ids = await manager.get_user_track_ids(user_id)
+    
+    if not track_ids:
+        return {"status": "ok", "message": "У пользователя нет активных маршрутов"}
+    
+    # 2. Запускаем парсер принудительно (вне очереди основного цикла)
+    # Это обновит данные в БД
+    await parser.update_specific_tracks(track_ids)
+    
+    # 3. Возвращаем свежие данные сразу, чтобы фронтенд мог обновиться
+    updated_data = await manager.get_user_dashboard(user_id)
+    
+    return {
+        "status": "ok", 
+        "message": f"Данные для {user_id} обновлены", 
+        "dashboard": updated_data
+    }
