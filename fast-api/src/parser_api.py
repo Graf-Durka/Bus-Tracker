@@ -3,6 +3,12 @@ import datetime
 import re
 import asyncio
 import urllib.parse
+import asyncio
+import sys
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from playwright.async_api import async_playwright
 
 class AsyncParserService:
@@ -68,7 +74,7 @@ class AsyncParserService:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
             )
             
             for track_id, bus_name, est_mins, direction, s_stop, e_stop in tasks:

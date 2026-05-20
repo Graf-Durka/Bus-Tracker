@@ -241,7 +241,7 @@ class ParserDB:
                         # Ждем появления списка или сразу карточки
                         page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=10000)
                         
-                        bus_elements = page.query_selector_all("._1kf6gff")
+                        bus_elements = page.query_selector_all("._1sv3x8qq")
                         clicked = False
                         for el in bus_elements:
                             card_text = el.inner_text().strip()

@@ -3,9 +3,19 @@ from src.user_service import BusManager
 from src.parser_api_updated import AsyncParserService
 import asyncio
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI()
 app.state.bus_manager = BusManager()
 app.state.parser = AsyncParserService()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -33,6 +43,20 @@ async def clear_data(user_id: str, request: Request):
     """
     await app.state.bus_manager.delete_user_data(user_id)
     return {"status": "ok", "message": f"Данные пользователя {user_id} очищены"}
+
+@app.get("/get_user_id")
+async def get_user_id(request: Request):
+    """
+    Получает IP пользователя и возвращает его уникальный ID.
+    Если IP еще нет в базе, он будет добавлен.
+    """
+    ip = request.headers.get("X-Forwarded-For", request.client.host)
+    if ip:
+        ip = ip.split(",")[0].strip()
+        
+    manager: BusManager = request.app.state.bus_manager
+    user_id = await manager.get_or_create_user_id(ip)
+    return {"status": "ok", "user_id": user_id, "ip": ip}
 
 @app.get("/dashboard")
 async def dashboard(request: Request, user_id: str = "0"):

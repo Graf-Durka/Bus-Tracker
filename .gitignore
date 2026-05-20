@@ -1,1 +1,6 @@
 __pycache__/
+upprpo
+*.jpg
+demo_ui
+*.sqlite-shm
+*.sqlite-wal

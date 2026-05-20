@@ -42,8 +42,35 @@ class BusManager:
                     FOREIGN KEY (track_id) REFERENCES search_results (track_id) ON DELETE CASCADE
                 )
             ''')
+            
+            # Таблица сопоставления IP и ID
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_ips (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip TEXT UNIQUE
+                )
+            ''')
+            
             conn.commit()
             print("[DB] Таблицы search_results и user_routes проверены/созданы.")
+
+    async def get_or_create_user_id(self, ip: str) -> str:
+        """
+        Ищет IP в таблице user_ips. Если находит - возвращает id,
+        если нет - создает новую запись и возвращает новый id.
+        """
+        with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id FROM user_ips WHERE ip = ?", (ip,))
+            row = cursor.fetchone()
+            if row:
+                return str(row[0])
+            
+            cursor.execute("INSERT INTO user_ips (ip) VALUES (?)", (ip,))
+            conn.commit()
+            return str(cursor.lastrowid)
 
     async def delete_user_data(self, user_id: str):
         """

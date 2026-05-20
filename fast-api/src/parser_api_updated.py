@@ -3,6 +3,12 @@ import datetime
 import re
 import asyncio
 import urllib.parse
+import asyncio
+import sys
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from playwright.async_api import async_playwright
 
 class AsyncParserService:
@@ -57,7 +63,7 @@ class AsyncParserService:
             browser = await p.chromium.launch(headless=True, args=['--disable-dev-shm-usage'])
             context = await browser.new_context(
                 viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
             )
 
             for track_id, bus_name, est_mins, direction, s_stop, e_stop in tasks:
@@ -76,24 +82,27 @@ class AsyncParserService:
                         wait_until="domcontentloaded" 
                     )
                     
-                    # Ждем появления списка ИЛИ карточки
                     try:
-                        await page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=10000)
+                        # Ждем появления списка ИЛИ карточки
+                        await page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=15000)
+
+                        # Проверка на список (если нужно кликнуть)
+                        bus_cards = await page.query_selector_all("._1kf6gff")
+                        if bus_cards:
+                            for card in bus_cards:
+                                name = (await card.inner_text()).split('\n')[0].replace('\xa0', ' ').strip()
+                                if name == bus_name:
+                                    await card.click()
+                                    await asyncio.sleep(0.5)
+                                    break
+                                    
+                        # Независимо от того, кликали или нет - дожидаемся окна остановок
+                        await page.wait_for_selector("._1sv3x8qq", timeout=10000)
                     except:
                         pass
 
-                    # Проверка на список (если нужно кликнуть)
-                    bus_cards = await page.query_selector_all("._1kf6gff")
-                    if bus_cards:
-                        for card in bus_cards:
-                            text = await card.inner_text()
-                            if bus_name in text.split('\n')[0]:
-                                await card.click()
-                                await asyncio.sleep(0.5)
-                                break
-                    
-                    # Даем секундную паузу на прогрузку Live-данных (времени прибытия)
-                    await asyncio.sleep(1.5)
+                    # Даем паузу на прогрузку Live-данных (времени прибытия)
+                    await asyncio.sleep(2.0)
 
                     stops_data = await page.evaluate(r"""() => {
                         return Array.from(document.querySelectorAll('._15nfxwn')).map(el => {
@@ -108,14 +117,22 @@ class AsyncParserService:
                     }""")
 
                     start_idx, end_idx = -1, -1
-                    target_occ = 2 if direction == 'from' else 1
-                    curr_occ = 0
+                    # Умный поиск: просто ищем такое вхождение стартовой остановки, 
+                    # чтобы конечная остановка физически была ПОСЛЕ нее в списке.
                     for i, s in enumerate(stops_data):
-                        if s_stop.lower() in s['name'].lower() and start_idx == -1:
-                            curr_occ += 1
-                            if curr_occ == target_occ: start_idx = i
-                        elif e_stop.lower() in s['name'].lower() and start_idx != -1:
-                            end_idx = i; break
+                        s_name = s['name'].replace('\xa0', ' ').lower()
+                        if s_stop.lower() in s_name:
+                            temp_end = -1
+                            for j in range(i + 1, len(stops_data)):
+                                e_name = stops_data[j]['name'].replace('\xa0', ' ').lower()
+                                if e_stop.lower() in e_name:
+                                    temp_end = j
+                                    break
+                            
+                            if temp_end != -1:
+                                start_idx = i
+                                end_idx = temp_end
+                                break
 
                     if start_idx != -1 and end_idx != -1:
                         now = datetime.datetime.now()
@@ -170,13 +187,18 @@ class AsyncParserService:
                             if arrival_e is None:
                                 arrival_e = (start_dt + datetime.timedelta(minutes=est_mins)).strftime("%H:%M")
 
+                            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
                             with self._get_conn() as conn:
                                 conn.execute('''UPDATE search_results SET arrival_time_start=?, arrival_time_end=?, 
-                                                travel_time_route=?, status='active', last_updated=CURRENT_TIMESTAMP WHERE track_id=?''',
-                                             (arrival_s, arrival_e, max(0, t_route), track_id))
+                                                travel_time_route=?, status='active', last_updated=? WHERE track_id=?''',
+                                             (arrival_s, arrival_e, max(0, t_route), now_str, track_id))
                                 conn.commit()
-                            print(f"  [{method}] {bus_name}: {arrival_s} -> {arrival_e} ({t_route} мин)")
+                            print(f"  [{method}] {bus_name}: {arrival_s} -> {arrival_e} ({t_route} мин)", flush=True)
                     else:
+                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        found_stops = [s['name'] for s in stops_data]
+                        print(f"  [WARN] {bus_name}: Не найдены остановки '{s_stop}' или '{e_stop}'. Переводим в passed.", flush=True)
+                        print(f"  [DBG INFO] ({bus_name}) direction={direction}, target_occ={target_occ}. Доступные остановки (первые 30): {found_stops[:30]}", flush=True)
                         with self._get_conn() as conn:
                             # Вместо удаления просто помечаем маршрут, чтобы он остался в БД и на дашборде
                             conn.execute('''
@@ -184,27 +206,108 @@ class AsyncParserService:
                                 SET status='passed', 
                                     arrival_time_start='--', 
                                     arrival_time_end='--', 
-                                    last_updated=CURRENT_TIMESTAMP 
+                                    last_updated=? 
                                 WHERE track_id=?
-                            ''', (track_id,))
+                            ''', (now_str, track_id))
                             conn.commit()
                 except Exception as e:
-                    print(f"  [ERR] {bus_name}: {e}")
+                    print(f"  [ERR] {bus_name}: {type(e).__name__} - {e}", flush=True)
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    with self._get_conn() as conn:
+                        conn.execute("UPDATE search_results SET last_updated=? WHERE track_id=?", (now_str, track_id))
+                        conn.commit()
                 finally:
                     await page.close()
             await browser.close()
 
     async def update_all_live_data(self):
-        """Обновление всех автобусов по расписанию."""
+        """Обновление всех автобусов по прогрессивной шкале в зависимости от времени прибытия."""
+        now = datetime.datetime.now()
+        tasks_to_run = []
+        
         with self._get_conn() as conn:
             cursor = conn.cursor()
+            # Извлекаем все активные маршруты и сразу считаем, сколько секунд назад они обновлялись.
             cursor.execute('''
-                SELECT track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop 
+                SELECT 
+                    track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop, 
+                    arrival_time_start, 
+                    (strftime('%s', 'now') - strftime('%s', last_updated)) AS seconds_since_update,
+                    status,
+                    last_updated
                 FROM search_results 
-                WHERE status = 'pending' OR (strftime('%s', 'now') - strftime('%s', last_updated) > 45)
+                WHERE status IN ('pending', 'active', 'passed')
             ''')
-            tasks = cursor.fetchall()
-        await self._run_parsing_loop(tasks)
+            rows = cursor.fetchall()
+
+        for row in rows:
+            track_id, bus_name, est_travel_time_mins, direction, start_stop, end_stop = row[:6]
+            arr_start = row[6]
+            seconds_since_update = row[7] if row[7] is not None else 9999
+            status = row[8]
+            last_updated_str = row[9]
+            
+            # Проверка last_updated: если старше 1 часа — принудительно обновить
+            try:
+                if last_updated_str:
+                    last_updated_dt = datetime.datetime.strptime(last_updated_str, "%Y-%m-%d %H:%M:%S")
+                    if (now - last_updated_dt).total_seconds() > 3600:
+                        tasks_to_run.append(row[:6])
+                        continue
+            except:
+                tasks_to_run.append(row[:6])
+                continue
+
+            # 1. Если маршрут только создан (pending) или еще нет точного времени
+            if status == 'pending' or not arr_start or arr_start in ('--', 'Запуск...', '...'):
+                # Обновляем по базовому таймеру цикла (раз в 45 сек)
+                if seconds_since_update >= 45:
+                    tasks_to_run.append(row[:6])
+                continue
+
+            # 2. Вычисляем оставшееся время в минутах до прибытия (относительно текущего времени)
+            try:
+                t_parts = datetime.datetime.strptime(arr_start, "%H:%M")
+                arr_dt = now.replace(hour=t_parts.hour, minute=t_parts.minute, second=0, microsecond=0)
+                
+                # Обработка перехода через полночь 
+                if arr_dt < now - datetime.timedelta(hours=6):
+                    arr_dt += datetime.timedelta(days=1)
+                elif arr_dt > now + datetime.timedelta(hours=18):
+                    arr_dt -= datetime.timedelta(days=1)
+                
+                # Защита от зависания времени "на вчерашнем дне"
+                hours_diff = abs((arr_dt - now).total_seconds()) / 3600
+                if hours_diff > 12 or arr_dt.date() < now.date():
+                    tasks_to_run.append(row[:6])
+                    continue
+
+                minutes_left = (arr_dt - now).total_seconds() / 60
+            except ValueError:
+                minutes_left = 0 # Фолбэк на случай ошибки парсинга строки
+                tasks_to_run.append(row[:6])
+                continue
+
+            # 3. Прогрессивная логика обновлений (от большего времени к меньшему)
+            if minutes_left > 60:
+                # Больше часа — не обновляем вообще.
+                # Когда системное время (now) пойдет вперед, minutes_left само станет < 60
+                pass 
+            elif minutes_left >= 30:
+                if seconds_since_update >= 600: tasks_to_run.append(row[:6]) # Раз в 10 минут
+            elif minutes_left >= 15:
+                if seconds_since_update >= 300: tasks_to_run.append(row[:6]) # Раз в 5 минут
+            elif minutes_left >= 10:
+                if seconds_since_update >= 180: tasks_to_run.append(row[:6]) # Раз в 3 минуты
+            elif minutes_left >= 5:
+                # От 5 до 10 мин. (В вашем описании пропущено, ставлю золотую середину — раз в 1.5 мин)
+                if seconds_since_update >= 90:  tasks_to_run.append(row[:6]) 
+            else:
+                # Меньше 5 минут (или автобус уже задерживается) — обновляем постоянно (раз в 45 сек)
+                if seconds_since_update >= 45:  tasks_to_run.append(row[:6])
+
+        # Запускаем парсинг только для тех маршрутов, чье время пришло
+        await self._run_parsing_loop(tasks_to_run)
 
     async def update_specific_tracks(self, track_ids: list):
         """Обновление всех маршрутов конкретного пользователя."""
