@@ -3,7 +3,6 @@ import sqlite3
 class BusManager:
     def __init__(self, db_path='data/buses_data.sqlite'):
         self.db_path = db_path
-        self.SYSTEM_USER_ID = "0"
         self.setup_database() 
 
     def _get_conn(self):
@@ -43,34 +42,8 @@ class BusManager:
                 )
             ''')
             
-            # Таблица сопоставления IP и ID
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_ips (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ip TEXT UNIQUE
-                )
-            ''')
-            
             conn.commit()
             print("[DB] Таблицы search_results и user_routes проверены/созданы.")
-
-    async def get_or_create_user_id(self, ip: str) -> str:
-        """
-        Ищет IP в таблице user_ips. Если находит - возвращает id,
-        если нет - создает новую запись и возвращает новый id.
-        """
-        with self._get_conn() as conn:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT id FROM user_ips WHERE ip = ?", (ip,))
-            row = cursor.fetchone()
-            if row:
-                return str(row[0])
-            
-            cursor.execute("INSERT INTO user_ips (ip) VALUES (?)", (ip,))
-            conn.commit()
-            return str(cursor.lastrowid)
 
     async def delete_user_data(self, user_id: str):
         """
@@ -81,10 +54,11 @@ class BusManager:
             cursor = conn.cursor()
             conn.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("DELETE FROM user_routes WHERE user_id = ?", (str(user_id),))
-            # Удаляем из search_results только те задачи, которые никто не смотрит (даже "0")
+            # Удаляем из search_results только те задачи, которые никто не смотрит и которые созданы > 10 минут назад
             cursor.execute('''
                 DELETE FROM search_results 
                 WHERE track_id NOT IN (SELECT DISTINCT track_id FROM user_routes)
+                AND (strftime('%s', 'now') - strftime('%s', last_updated)) > 600
             ''')
             conn.commit()
             print(f"[DB] Данные для пользователя {user_id} очищены.")
@@ -95,20 +69,27 @@ class BusManager:
             conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             query = '''
-                SELECT DISTINCT r.id, r.bus_name, s1.direction, s1.arrival_time, s2.arrival_time
-                FROM routes r
-                JOIN route_stops s1 ON r.id = s1.route_id
-                JOIN route_stops s2 ON r.id = s2.route_id AND s1.direction = s2.direction
-                WHERE s1.stop_name LIKE ? AND s2.stop_name LIKE ? AND s1.stop_order < s2.stop_order
+                WITH matches AS (
+                    SELECT r.id as r_id, r.bus_name, s1.direction as direct, 
+                           s1.arrival_time as t1, s2.arrival_time as t2,
+                           ABS(CAST(s2.arrival_time AS FLOAT) - CAST(s1.arrival_time AS FLOAT)) as est
+                    FROM routes r
+                    JOIN route_stops s1 ON r.id = s1.route_id
+                    JOIN route_stops s2 ON r.id = s2.route_id AND s1.direction = s2.direction
+                    WHERE s1.stop_name LIKE ? AND s2.stop_name LIKE ? AND s1.stop_order < s2.stop_order
+                )
+                SELECT r_id, bus_name, direct, t1, t2, MIN(est)
+                FROM matches
+                GROUP BY r_id
             '''
             cursor.execute(query, (f'%{start}%', f'%{end}%'))
             
-            for r_id, bus, direct, t1, t2 in cursor.fetchall():
+            for r_id, bus, direct, t1, t2, est_min in cursor.fetchall():
                 # Проверяем наличие задачи
                 cursor.execute("""
                     SELECT track_id, arrival_time_start, arrival_time_end, status 
-                    FROM search_results WHERE route_id=? AND start_stop=? AND end_stop=?
-                """, (r_id, start, end))
+                    FROM search_results WHERE route_id=? AND start_stop=? AND end_stop=? AND direction=?
+                """, (r_id, start, end, direct))
                 
                 exists = cursor.fetchone()
                 if exists:
@@ -118,7 +99,7 @@ class BusManager:
                         "arrival_start": exists[1] or "...", "arrival_end": exists[2] or "...", "status": exists[3]
                     })
                 else:
-                    est = abs(int(float(t2)) - int(float(t1)))
+                    est = int(est_min)
                     cursor.execute("""
                         INSERT INTO search_results 
                         (route_id, start_stop, end_stop, bus_name, direction, est_travel_time_mins, status) 
@@ -130,10 +111,8 @@ class BusManager:
                         "arrival_start": "Запуск...", "arrival_end": "---", "status": "pending"
                     })
                 
-                # АВТО-ПРИВЯЗКА К СИСТЕМНОМУ ПОЛЬЗОВАТЕЛЮ "0"
-                # Чтобы парсер не удалил маршрут до нажатия кнопки Subscribe
-                cursor.execute("INSERT OR IGNORE INTO user_routes (user_id, track_id) VALUES (?,?)", 
-                               (self.SYSTEM_USER_ID, track_id))
+                # АВТО-ПРИВЯЗКА К СИСТЕМНОМУ ПОЛЬЗОВАТЕЛЮ "0" УБРАНА
+                # Теперь маршруты просто создаются, а "сборщик мусора" удалит их через 10 минут, если никто не подпишется
                                
             conn.commit()
         return found
@@ -142,6 +121,22 @@ class BusManager:
         with self._get_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("INSERT OR IGNORE INTO user_routes (user_id, track_id) VALUES (?,?)", (str(user_id), track_id))
+            conn.commit()
+        return True
+
+    async def unsubscribe(self, user_id: str, track_id: int):
+        """Отписывает пользователя от конкретного маршрута и удаляет сиротские задачи."""
+        with self._get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            cursor = conn.cursor()
+            # Удаляем привязку
+            cursor.execute("DELETE FROM user_routes WHERE user_id = ? AND track_id = ?", (str(user_id), track_id))
+            # Удаляем задачу парсинга, если на нее больше никто не подписан и прошло хотя бы 10 минут
+            cursor.execute('''
+                DELETE FROM search_results 
+                WHERE track_id NOT IN (SELECT DISTINCT track_id FROM user_routes)
+                AND (strftime('%s', 'now') - strftime('%s', last_updated)) > 600
+            ''')
             conn.commit()
         return True
 

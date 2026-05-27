@@ -25,6 +25,10 @@ async def startup_event():
             await asyncio.sleep(45)
     asyncio.create_task(loop_parser())
 
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "API works"}
+
 @app.get("/get_buses")
 async def get_buses(start: str, end: str, request: Request):
 
@@ -36,27 +40,27 @@ async def subscribe(track_id: int, request: Request, user_id: str = "0"):
     success = await manager.quick_subscribe(user_id, track_id)
     return {"status": "ok" if success else "error"}
 
+@app.delete("/unsubscribe")
+async def unsubscribe(track_id: int, request: Request, user_id: str = "0"):
+    """
+    Удаляет подписку пользователя на конкретный маршрут (track_id).
+    Если маршрут больше никто не отслеживает, задача парсера также удаляется.
+    """
+    manager: BusManager = request.app.state.bus_manager
+    await manager.unsubscribe(user_id, track_id)
+    return {"status": "ok", "message": f"Вы отписались от маршрута {track_id}"}
+
 @app.delete("/clear_data")
 async def clear_data(user_id: str, request: Request):
     """
-    Если user_id="0" - удаляет все маршруты, на которые никто не подписан.
+    Удаляет все маршруты пользователя.
     """
     await app.state.bus_manager.delete_user_data(user_id)
     return {"status": "ok", "message": f"Данные пользователя {user_id} очищены"}
 
-@app.get("/get_user_id")
-async def get_user_id(request: Request):
-    """
-    Получает IP пользователя и возвращает его уникальный ID.
-    Если IP еще нет в базе, он будет добавлен.
-    """
-    ip = request.headers.get("X-Forwarded-For", request.client.host)
-    if ip:
-        ip = ip.split(",")[0].strip()
-        
-    manager: BusManager = request.app.state.bus_manager
-    user_id = await manager.get_or_create_user_id(ip)
-    return {"status": "ok", "user_id": user_id, "ip": ip}
+# Метод get_user_id (по IP) полностью удален, так как Android-клиент 
+# должен сам генерировать и передавать свой UUID (или Google Advertising ID / Android ID)
+# в качестве параметра user_id во все эндпоинты.
 
 @app.get("/dashboard")
 async def dashboard(request: Request, user_id: str = "0"):
