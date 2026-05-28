@@ -74,7 +74,7 @@ class AsyncParserService:
                         # Блокируем ВСЁ лишнее: картинки, шрифты, стили карт
                         await page.route("**/*.{png,jpg,jpeg,svg,woff,woff2,css}", lambda route: route.abort())
                     
-                        # КЛЮЧ: ждем только 'domcontentloaded' (структуру), а не 'load' (картинки)
+                        # КЛЮЧ: ждем только 'domcontentloaded' (структуру)
                         await page.goto(
                             f"https://2gis.ru/novosibirsk/search/{urllib.parse.quote(bus_name)}", 
                             wait_until="domcontentloaded" 
@@ -84,7 +84,7 @@ class AsyncParserService:
                             # Ждем появления списка ИЛИ карточки
                             await page.wait_for_selector("._1kf6gff, ._1sv3x8qq", timeout=15000)
 
-                            # Проверка на список (если нужно кликнуть)
+                            # Проверка на список
                             bus_cards = await page.query_selector_all("._1kf6gff")
                             if bus_cards:
                                 for card in bus_cards:
@@ -97,7 +97,7 @@ class AsyncParserService:
                             # Независимо от того, кликали или нет - дожидаемся окна остановок
                             await page.wait_for_selector("._1sv3x8qq", timeout=10000)
                             
-                            # Явно ждем появления самих остановок в DOM (чтобы избежать пустых списков при задержках 2GIS)
+                            # Явно ждем появления самих остановок в DOM
                             await page.wait_for_selector("._15nfxwn", timeout=10000)
                         except:
                             pass
@@ -152,7 +152,7 @@ class AsyncParserService:
                                         if self.is_time_valid(calc, est_mins):
                                             arrival_e, t_route, method = (now + datetime.timedelta(minutes=e_mins)).strftime("%H:%M"), calc, "M1"
 
-                                # --- МЕТОД 2: АНКЕР (ОРИГИНАЛ) ---
+                                # --- МЕТОД 2: АНКЕР ---
                                 if arrival_e is None:
                                     last_anc_m = None
                                     for i in range(start_idx, end_idx + 1):
@@ -193,8 +193,6 @@ class AsyncParserService:
                                     conn.execute('''UPDATE search_results SET arrival_time_start=?, arrival_time_end=?, 
                                                     travel_time_route=?, status='active', last_updated=? WHERE track_id=?''',
                                                  (arrival_s, arrival_e, max(0, t_route), now_str, track_id))
-                                    # Оптимизация логов: чтобы не заспамливать, печатаем только если время поменялось (или отладочный вывод можно закомментировать)
-                                    # В рамках задачи мы оставим печать, но она больше не будет вызываться каждую секунду из-за исправления progressive update
                                     conn.commit()
                                 print(f"  [{method}] {bus_name}: {arrival_s} -> {arrival_e} ({t_route} мин)", flush=True)
                         else:
@@ -220,7 +218,7 @@ class AsyncParserService:
                             conn.commit()
                     finally:
                         await page.close()
-                        # Небольшая пауза между вкладками, чтобы не ловить блокировки/троттлинг от 2GIS при массовом парсинге
+                        # Небольшая пауза между вкладками, чтобы не ловить блокировки/троттлинг
                         await asyncio.sleep(1.0)
                 await browser.close()
 
@@ -312,7 +310,7 @@ class AsyncParserService:
             elif minutes_left >= 10:
                 if seconds_since_update >= 180: tasks_to_run.append(row[:6]) # Раз в 3 минуты
             elif minutes_left >= 5:
-                # От 5 до 10 мин. (В вашем описании пропущено, ставлю золотую середину — раз в 1.5 мин)
+                # От 5 до 10 мин.
                 if seconds_since_update >= 90:  tasks_to_run.append(row[:6]) 
             else:
                 # Меньше 5 минут (или автобус уже задерживается) — обновляем постоянно (раз в 45 сек)

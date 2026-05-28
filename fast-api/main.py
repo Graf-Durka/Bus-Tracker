@@ -58,10 +58,6 @@ async def clear_data(user_id: str, request: Request):
     await app.state.bus_manager.delete_user_data(user_id)
     return {"status": "ok", "message": f"Данные пользователя {user_id} очищены"}
 
-# Метод get_user_id (по IP) полностью удален, так как Android-клиент 
-# должен сам генерировать и передавать свой UUID (или Google Advertising ID / Android ID)
-# в качестве параметра user_id во все эндпоинты.
-
 @app.get("/dashboard")
 async def dashboard(request: Request, user_id: str = "0"):
     manager: BusManager = request.app.state.bus_manager
