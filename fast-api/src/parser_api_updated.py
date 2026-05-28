@@ -14,8 +14,6 @@ from playwright.async_api import async_playwright
 class AsyncParserService:
     def __init__(self, db_path='data/buses_data.sqlite'):
         self.db_path = db_path
-        # Оставляем семафор на случай, если где-то вызовется параллельно, 
-        # но внутри методов будем идти циклом
         self.semaphore = asyncio.Semaphore(3)
         self._check_and_update_schema()
 
@@ -60,7 +58,6 @@ class AsyncParserService:
 
         async with self.semaphore:
             async with async_playwright() as p:
-                # Запускаем с небольшими оптимизациями для Docker
                 browser = await p.chromium.launch(headless=True, args=['--disable-dev-shm-usage'])
                 context = await browser.new_context(
                     viewport={'width': 1280, 'height': 800},

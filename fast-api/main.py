@@ -75,6 +75,7 @@ async def dashboard(request: Request, user_id: str = "0"):
             "arrival_start": r[4] if r[4] else None,
             "arrival_end": r[5] if r[5] else None,
             "status": r[6],
+            "est_travel_time": r[8] if r[8] is not None else r[7], 
         } for r in data
     ]
 

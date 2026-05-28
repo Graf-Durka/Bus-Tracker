@@ -96,7 +96,8 @@ class BusManager:
                     track_id = exists[0]
                     found.append({
                         "track_id": track_id, "bus": bus, 
-                        "arrival_start": exists[1] or "...", "arrival_end": exists[2] or "...", "status": exists[3]
+                        "arrival_start": exists[1] or "...", "arrival_end": exists[2] or "...", "status": exists[3],
+                        "est_travel_time": int(est_min)
                     })
                 else:
                     est = int(est_min)
@@ -108,12 +109,10 @@ class BusManager:
                     track_id = cursor.lastrowid
                     found.append({
                         "track_id": track_id, "bus": bus, 
-                        "arrival_start": "Запуск...", "arrival_end": "---", "status": "pending"
+                        "arrival_start": "Запуск...", "arrival_end": "---", "status": "pending",
+                        "est_travel_time": est
                     })
-                
-                # АВТО-ПРИВЯЗКА К СИСТЕМНОМУ ПОЛЬЗОВАТЕЛЮ "0" УБРАНА
-                # Теперь маршруты просто создаются, а "сборщик мусора" удалит их через 10 минут, если никто не подпишется
-                               
+
             conn.commit()
         return found
 
@@ -145,7 +144,7 @@ class BusManager:
             conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT sr.track_id, sr.bus_name, sr.start_stop, sr.end_stop, sr.arrival_time_start, sr.arrival_time_end, sr.status
+                SELECT sr.track_id, sr.bus_name, sr.start_stop, sr.end_stop, sr.arrival_time_start, sr.arrival_time_end, sr.status, sr.est_travel_time_mins, sr.travel_time_route
                 FROM user_routes ur JOIN search_results sr ON ur.track_id = sr.track_id
                 WHERE ur.user_id = ?
             ''', (str(user_id),))
@@ -169,9 +168,6 @@ class BusManager:
         for row in raw_stops:
             name = row[0]
             if name:
-                # .split('(') разобьет строку на список: ['Метро Студенческая ', 'проспект Карла Маркса)']
-                # [0] берет первую часть (до скобки)
-                # .strip() убирает лишние пробелы по краям
                 cleaned_name = name.split('(')[0].strip()
                 
                 if cleaned_name:
