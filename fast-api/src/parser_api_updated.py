@@ -47,7 +47,7 @@ class AsyncParserService:
                 dt = now.replace(hour=t_parts.hour, minute=t_parts.minute, second=0, microsecond=0)
                 if dt < now - datetime.timedelta(hours=6):
                     dt += datetime.timedelta(days=1)
-                return int((dt - now).total_seconds() / 60)
+                return round((dt - now).total_seconds() / 60)
             except: pass
         return None
 
@@ -136,7 +136,9 @@ class AsyncParserService:
                                         break  # Нашли первую подходящую конечную для этой стартовой
 
                         if start_idx != -1 and end_idx != -1:
-                            now = datetime.datetime.now()
+                            now_exact = datetime.datetime.now()
+                            # Обрезаем секунды (например, чтобы 06:00:40 считалось как ровно 6:00)
+                            now = now_exact.replace(second=0, microsecond=0)
                             s_mins = self.parse_to_minutes(stops_data[start_idx], now)
                         
                             if s_mins is not None:
@@ -144,51 +146,48 @@ class AsyncParserService:
                                 arrival_s = start_dt.strftime("%H:%M")
                                 arrival_e, t_route, method = None, est_mins, "FB"
 
-                                # --- МЕТОД 1: ПРЯМОЙ (если оба ЧЧ:ММ) ---
-                                if stops_data[start_idx]['timeAbs'] and stops_data[end_idx]['timeAbs']:
-                                    e_mins = self.parse_to_minutes(stops_data[end_idx], now)
-                                    if e_mins is not None:
-                                        calc = e_mins - s_mins
-                                        if self.is_time_valid(calc, est_mins):
-                                            arrival_e, t_route, method = (now + datetime.timedelta(minutes=e_mins)).strftime("%H:%M"), calc, "M1"
+                                # --- ЕДИНЫЙ МЕТОД (Универсальное накопление) ---
+                                acc_m = 0
+                                prev_known_m = None
+                                last_known_idx = None
 
-                                # --- МЕТОД 2: АНКЕР ---
-                                if arrival_e is None:
-                                    last_anc_m = None
-                                    for i in range(start_idx, end_idx + 1):
-                                        if stops_data[i]['timeAbs']:
-                                            last_anc_m = self.parse_to_minutes(stops_data[i], now)
-                                
-                                    if last_anc_m is not None:
-                                        # Плюс остаток минут до конечной
-                                        e_rel_only = self.parse_to_minutes({'timeRel': stops_data[end_idx]['timeRel']}, now) or 0
-                                        total_e = last_anc_m + e_rel_only
-                                        calc = total_e - s_mins
-                                        if self.is_time_valid(calc, est_mins):
-                                            arrival_e, t_route, method = (now + datetime.timedelta(minutes=total_e)).strftime("%H:%M"), calc, "M2"
+                                # Идем последовательно по всем остановкам (включая конечную)
+                                for i in range(start_idx, end_idx + 1):
+                                    cur_m = self.parse_to_minutes(stops_data[i], now)
+                                    if cur_m is not None:
+                                        if prev_known_m is not None:
+                                            if cur_m >= prev_known_m:
+                                                # Время возросло или осталось тем же = тот же самый автобус едет дальше.
+                                                # Добавляем пройденное время между предыдущей и текущей остановкой.
+                                                acc_m += (cur_m - prev_known_m)
+                                            else:
+                                                # Время упало = этот автобус уже проехал, 2GIS показывает время следующего автобуса!
+                                                # Мы принимаем аппроксимацию: следующий автобус сейчас находится примерно в районе
+                                                # предыдущей известной остановки, и значит добираться от нее до текущей ему ровно cur_m минут.
+                                                acc_m += cur_m
+                                        
+                                        prev_known_m = cur_m
+                                        last_known_idx = i
 
-                                # --- МЕТОД 3: НАКОПЛЕНИЕ ---
-                                if arrival_e is None:
-                                    acc_m, prev_m = 0, None
-                                    for i in range(start_idx, end_idx):
-                                        cur_m = self.parse_to_minutes(stops_data[i], now)
-                                        if cur_m is not None:
-                                            if prev_m is not None and cur_m < prev_m:
-                                                acc_m += prev_m
-                                            prev_m = cur_m
-                                
-                                    final_m = self.parse_to_minutes(stops_data[end_idx], now)
-                                    if final_m is not None:
-                                        total_e = acc_m + final_m
-                                        calc = total_e - s_mins
-                                        if self.is_time_valid(calc, est_mins):
-                                            arrival_e, t_route, method = (now + datetime.timedelta(minutes=total_e)).strftime("%H:%M"), calc, "M3"
+                                if last_known_idx is not None:
+                                    # Если 2GIS обрезал данные на самой конечной, аппроксимируем "слепой" остаток пути
+                                    if last_known_idx < end_idx:
+                                        total_stops = end_idx - start_idx
+                                        if total_stops > 0:
+                                            mins_per_stop = est_mins / total_stops
+                                            missing_stops = end_idx - last_known_idx
+                                            acc_m += round(missing_stops * mins_per_stop)
+
+                                    if self.is_time_valid(acc_m, est_mins):
+                                        t_route = acc_m
+                                        arrival_e = (start_dt + datetime.timedelta(minutes=t_route)).strftime("%H:%M")
+                                        method = "M_ACCUM"
 
                                 # --- ФОЛБЭК ---
                                 if arrival_e is None:
                                     arrival_e = (start_dt + datetime.timedelta(minutes=est_mins)).strftime("%H:%M")
 
-                                now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                                now_str = now_exact.strftime("%Y-%m-%d %H:%M:%S")
                                 with self._get_conn() as conn:
                                     conn.execute('''UPDATE search_results SET arrival_time_start=?, arrival_time_end=?, 
                                                     travel_time_route=?, status='active', last_updated=? WHERE track_id=?''',
