@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@color/widget_background"
+    android:gravity="center">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/count_of_buses"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="@color/primary_text"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/countValue"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/five"
+        android:textSize="32sp"
+        android:textStyle="bold"
+        android:textColor="@color/accent_color"
+        android:layout_marginBottom="16dp" />
+
+    <SeekBar
+        android:id="@+id/countSeekBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="50"
+        android:progress="5"
+        android:thumbTint="@color/accent_color"
+        android:progressTint="@color/accent_color" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/text_of_pols"
+        android:textSize="12sp"
+        android:textColor="@color/secondary_text"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="24dp" />
+
+    <Button
+        android:id="@+id/confirmCountButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="@string/confirm"
+        android:background="@drawable/widget_button_bg"
+        android:textColor="@android:color/white" />
+
+</LinearLayout>

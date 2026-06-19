@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bus_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="12dp"
+    android:background="@color/card_background">
+
+    <TextView
+        android:id="@+id/busNumber"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        android:textColor="@color/accent_color"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/totalTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_alignParentTop="true"
+        android:textColor="@color/primary_text"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/fromStationName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/busNumber"
+        android:layout_alignParentStart="true"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/primary_text"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/fromStationTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/fromStationName"
+        android:layout_alignParentStart="true"
+        android:textColor="@color/time_text"
+        android:textSize="10sp" />
+
+    <TextView
+        android:id="@+id/toStationName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/totalTime"
+        android:layout_alignParentEnd="true"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/primary_text"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/toStationTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/toStationName"
+        android:layout_alignParentEnd="true"
+        android:textColor="@color/time_text"
+        android:textSize="10sp" />
+
+</RelativeLayout>

@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">Glance</string>
+    <string name="count_of_buses">Количество автобусов</string>
+    <string name="pre_loading">Проведите первичную настройку для использования нашего сервиса</string>
+    <string name="settings">НАСТРОЙКА</string>
+    <string name="five">5</string>
+    <string name="text_of_pols">(1 - 50 автобусов)</string>
+    <string name="confirm">ПОДТВЕРДИТЬ</string>
+    <string name="choose">Выберите</string>
+    <string name="find">🔍 Поиск остановки...</string>
+    <string name="check_mark">✓</string>
+    <string name="update_time">--:--</string>
+    <string name="choose_setting">Выбрать</string>
+    <string name="from">ОТКУДА</string>
+    <string name="to">КУДА</string>
+    <string name="count_of_buses_up">КОЛИЧЕСТВО АВТОБУСОВ</string>
+    <string name="confirm_settings">ПОДТВЕРДИТЬ</string>
+    <string name="finish_setting">ЗАВЕРШИТЬ НАСТРОЙКУ</string>
+</resources>
